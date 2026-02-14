@@ -1,4 +1,4 @@
-package com.example.weatherapp
+package com.example.weatherapp.activities
 
 import android.content.pm.PackageManager
 import android.location.Location
@@ -52,9 +52,13 @@ import com.example.weatherapp.models.WeatherModel
 import com.example.weatherapp.viewmodel.WeatherUiState
 import com.example.weatherapp.viewmodel.WeatherViewModel
 import android.Manifest
+import androidx.compose.material3.Button
 import androidx.core.app.ActivityCompat
+import com.example.weatherapp.R
+import com.example.weatherapp.models.DailyForecast
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
+import java.util.Calendar
 
 @Composable
 fun WeatherBackground(condition: String) {
@@ -189,11 +193,11 @@ fun HourlyForecastItem(time: String, iconRes: Int, temp: Int) {
 }
 
 @Composable
-fun HourlyScrollingCard() {
+fun HourlyScrollingCard(hourlyTemps: List<Int>) {
     GlassCard(modifier = Modifier.fillMaxWidth()) {
         Column {
             Text(
-                text = "HOURLY FORECAST",
+                text = "NEXT 24 HOURS",
                 color = Color.White.copy(alpha = 0.5f),
                 fontSize = 12.sp,
                 fontWeight = FontWeight.Bold,
@@ -205,7 +209,7 @@ fun HourlyScrollingCard() {
             ) {
                 items(10) { index ->
                     HourlyForecastItem(
-                        time = "${(3 + index) % 12 + 1} PM",
+                        time = "${(Calendar.getInstance().get(Calendar.HOUR) + (index * 3)) % 12} ${if (index < 4) "PM" else "AM"}",
                         iconRes = R.drawable.contrast,
                         temp = 22 - index
                     )
@@ -249,7 +253,7 @@ fun DailyForecastRow(day: String, iconRes: Int, highTemp: Int, lowTemp: Int) {
 }
 
 @Composable
-fun WeeklyForecastCard() {
+fun WeeklyForecastCard(forecast: List<DailyForecast>) {
     GlassCard(modifier = Modifier.fillMaxWidth()) {
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -270,14 +274,12 @@ fun WeeklyForecastCard() {
 
             Spacer(modifier = Modifier.height(8.dp))
 
-            val days =
-                listOf("Today", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
-            days.forEach { dayName ->
+            forecast.forEach { daily ->
                 DailyForecastRow(
-                    day = dayName,
-                    iconRes = R.drawable.shirt,
-                    highTemp = 24,
-                    lowTemp = 18
+                    day = daily.dayName,
+                    iconRes = daily.imageResId,
+                    highTemp = daily.maxTemp,
+                    lowTemp = daily.minTemp
                 )
             }
         }
@@ -325,7 +327,7 @@ fun ErrorView(message: String, onRetry: () -> Unit) {
         Spacer(modifier = Modifier.height(8.dp))
         Text(text = message, color = Color.LightGray, fontSize = 16.sp)
         Spacer(modifier = Modifier.height(24.dp))
-        androidx.compose.material3.Button(onClick = onRetry) {
+        Button(onClick = onRetry) {
             Text("Try Again")
         }
     }
@@ -349,9 +351,9 @@ fun WeatherSuccessView(weather: WeatherModel) {
         Column(modifier = Modifier.padding(horizontal = 16.dp)) {
             AiSummarySection(currentTemp = weather.currentTemp, condition = weather.conditionText)
             Spacer(modifier = Modifier.height(24.dp))
-            HourlyScrollingCard()
+            HourlyScrollingCard(hourlyTemps = weather.hourlyTemps)
             Spacer(modifier = Modifier.height(24.dp))
-            WeeklyForecastCard()
+            WeeklyForecastCard(forecast = weather.weeklyForecast)
             Spacer(modifier = Modifier.height(16.dp))
 
             WeatherDetailGrid(weather)
