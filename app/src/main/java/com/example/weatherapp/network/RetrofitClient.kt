@@ -4,7 +4,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
 object RetrofitClient {
-    private const val BASE_URL = "https://api.openweathermap.org/data/2.5/"
+    private const val BASE_URL = "https://weather.visualcrossing.com/VisualCrossingWebServices/rest/services/"
 
     val apiService: WeatherApiService by lazy {
         Retrofit.Builder()

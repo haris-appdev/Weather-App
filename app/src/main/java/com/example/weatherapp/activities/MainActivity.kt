@@ -58,6 +58,10 @@ import com.example.weatherapp.R
 import com.example.weatherapp.models.DailyForecast
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
+import android.widget.Toast
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.platform.LocalContext
 import java.util.Calendar
 
 @Composable
@@ -207,11 +211,19 @@ fun HourlyScrollingCard(hourlyTemps: List<Int>) {
             LazyRow(
                 horizontalArrangement = Arrangement.spacedBy(24.dp)
             ) {
-                items(10) { index ->
+                items(hourlyTemps.size) { index ->
+                    val temp = hourlyTemps[index]
+                    val hour = (Calendar.getInstance().get(Calendar.HOUR_OF_DAY) + (index * 3)) % 24
+                    val timeLabel = when {
+                        hour == 0 -> "12 AM"
+                        hour < 12 -> "$hour AM"
+                        hour == 12 -> "12 PM"
+                        else -> "${hour - 12} PM"
+                    }
                     HourlyForecastItem(
-                        time = "${(Calendar.getInstance().get(Calendar.HOUR) + (index * 3)) % 12} ${if (index < 4) "PM" else "AM"}",
+                        time = timeLabel,
                         iconRes = R.drawable.contrast,
-                        temp = 22 - index
+                        temp = temp
                     )
                 }
             }
@@ -466,10 +478,12 @@ class MainActivity : ComponentActivity() {
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
         val viewModel = WeatherViewModel()
+        viewModel.fetchWeather("Lahore")
 
         setContent {
-
+            val context = LocalContext.current
             val uiState by viewModel.uiState.collectAsState()
+            val isRefreshing by viewModel.isRefreshing.collectAsState()
 
             Box(modifier = Modifier.fillMaxSize()) {
                 val condition = if (uiState is WeatherUiState.Success) {
@@ -478,19 +492,35 @@ class MainActivity : ComponentActivity() {
 
                 WeatherBackground(condition = condition)
 
-                Column {
-                    Spacer(modifier = Modifier.height(40.dp))
-                    WeatherSearchBar(
-                        onSearch = { city -> viewModel.fetchWeather(city) },
-                        onLocationClick = {
-                            fetchCurrentLocationWeather(viewModel)
-                        })
+                LaunchedEffect(Unit) {
+                    viewModel.errorEvents.collect { message ->
+                        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                    }
+                }
 
-                    when (val state = uiState) {
-                        is WeatherUiState.Loading -> LoadingView()
-                        is WeatherUiState.Success -> WeatherSuccessView(state.data)
-                        is WeatherUiState.Error -> ErrorView(state.message) {
-                            viewModel.fetchWeather("London")
+                PullToRefreshBox(
+                    isRefreshing = isRefreshing,
+                    onRefresh = {
+                        val currentCity = if (uiState is WeatherUiState.Success) {
+                            (uiState as WeatherUiState.Success).data.cityName
+                        } else "Lahore"
+                        viewModel.refreshWeather(currentCity)
+                    },
+                    modifier = Modifier.fillMaxSize()
+                ) {
+                    Column {
+                        Spacer(modifier = Modifier.height(40.dp))
+                        WeatherSearchBar(
+                            onSearch = { city -> viewModel.fetchWeather(city) },
+                            onLocationClick = { fetchCurrentLocationWeather(viewModel) }
+                        )
+
+                        when (val state = uiState) {
+                            is WeatherUiState.Loading -> LoadingView()
+                            is WeatherUiState.Success -> WeatherSuccessView(state.data)
+                            is WeatherUiState.Error -> ErrorView(state.message) {
+                                viewModel.fetchWeather("Lahore")
+                            }
                         }
                     }
                 }

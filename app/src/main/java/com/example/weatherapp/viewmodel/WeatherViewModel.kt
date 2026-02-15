@@ -1,16 +1,16 @@
 package com.example.weatherapp.viewmodel
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.weatherapp.R
 import com.example.weatherapp.models.DailyForecast
-import com.example.weatherapp.models.ForecastItem
-import com.example.weatherapp.models.ForecastResponse
+import com.example.weatherapp.models.VisualCrossingResponse
 import com.example.weatherapp.models.WeatherModel
-import com.example.weatherapp.models.WeatherResponse
 import com.example.weatherapp.network.RetrofitClient
-import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlinx.coroutines.launch
@@ -26,32 +26,42 @@ class WeatherViewModel: ViewModel() {
     private val _uiState = MutableStateFlow<WeatherUiState>(WeatherUiState.Loading)
     val uiState = _uiState
 
-    init {
-        fetchWeather("Lahore")
-    }
+    private val _isRefreshing = MutableStateFlow(false)
+    val isRefreshing = _isRefreshing
 
-    fun formatUnixToTime(unixTimestamp: Long): String {
-        val date = Date(unixTimestamp * 1000L)
-        val sdf = SimpleDateFormat("h:mm a", Locale.getDefault())
-        return sdf.format(date)
-    }
+    private val _errorEvents = MutableSharedFlow<String>()
+    val errorEvents = _errorEvents.asSharedFlow()
 
     fun fetchWeather(city: String) {
         viewModelScope.launch {
-            _uiState.value = WeatherUiState.Loading
-            try {
-                val apiKey = "178475033c4b53f1a110e87cccc661f9"
-
-                val currentDeferred = async { RetrofitClient.apiService.getCurrentWeather(city, apiKey) }
-                val forecastDeferred = async { RetrofitClient.apiService.getFiveDayForecast(city, "metric", apiKey) }
-
-                val currentResponse = currentDeferred.await()
-                val forecastResponse = forecastDeferred.await()
-
-                mapResponseToUi(currentResponse, forecastResponse)
-            } catch (e: Exception) {
-                _uiState.value = WeatherUiState.Error("Failed to load weather: ${e.message}")
+            if (_uiState.value !is WeatherUiState.Success) {
+                _uiState.value = WeatherUiState.Loading
             }
+
+            try {
+                val apiKey = "LEGUMZ7RTBTHJLAYREFDLJYDJ"
+                val response = RetrofitClient.apiService.getFullWeatherData(
+                    location = city,
+                    unitGroup = "metric",
+                    apiKey = apiKey,
+                    contentType = "json"
+                )
+                mapVisualCrossingToUi(response)
+            } catch (e: Exception) {
+                if (_uiState.value is WeatherUiState.Success) {
+                    _errorEvents.emit("No internet connection. Showing offline data.")
+                } else {
+                    _uiState.value = WeatherUiState.Error("Check your internet connection.")
+                }
+            }
+        }
+    }
+
+    fun refreshWeather(cityName: String) {
+        viewModelScope.launch {
+            _isRefreshing.value = true
+            fetchWeather(cityName)
+            isRefreshing.value = false
         }
     }
 
@@ -59,86 +69,77 @@ class WeatherViewModel: ViewModel() {
         viewModelScope.launch {
             _uiState.value = WeatherUiState.Loading
             try {
-                val apiKey = "178475033c4b53f1a110e87cccc661f9"
+                val apiKey = "LEGUMZ7RTBTHJLAYREFDLJYDJ"
 
-                val currentDeferred = async { RetrofitClient.apiService.getWeatherByCoords(lat, lon, apiKey) }
-                val forecastDeferred = async { RetrofitClient.apiService.getFiveDayForecastByCoords(lat, lon, "metric", apiKey) }
-
-                val currentResponse = currentDeferred.await()
-                val forecastResponse = forecastDeferred.await()
-
-                mapResponseToUi(currentResponse, forecastResponse)
+                val response = RetrofitClient.apiService.getFullWeatherDataByCoords(
+                    lat = lat,
+                    lon = lon,
+                    unitGroup = "metric",
+                    apiKey = apiKey,
+                    contentType = "json"
+                    )
+                mapVisualCrossingToUi(response)
             } catch (e: Exception) {
+                Log.e("WEATHER_DEBUG", "Coords fetch failed: ${e.message}")
                 _uiState.value = WeatherUiState.Error("Location failed: ${e.message}")
             }
         }
     }
 
-    private fun mapResponseToUi(response: WeatherResponse, forecast: ForecastResponse) {
-        val celsiusTemp = (response.main.temp - 273.15).toInt()
+    private fun mapVisualCrossingToUi(response: VisualCrossingResponse) {
+        val current = response.currentConditions
+        val today = response.days.first()
+
         val mappedData = WeatherModel(
-            cityName = response.name,
-            currentTemp = celsiusTemp,
-            conditionText = response.weather.firstOrNull()?.main ?: "Clear",
-            windSpeed = response.wind.speed,
-            humidity = response.main.humidity,
-            uvIndex = estimateGlobalUv(response.coord.lat, response.clouds.all).let {
-                "%.1f".format(it).toDouble()
-            },
-            sunsetTime = formatUnixToTime(response.sys.sunset),
-            hourlyTemps = forecast.list.take(8).map { (it.main.temp).toInt() },
-            weeklyForecast = parseWeeklyForecast(forecast.list)
+            cityName = response.resolvedAddress.split(",").first(),
+            currentTemp = current.temp.toInt(),
+            conditionText = current.conditions,
+            windSpeed = current.windspeed ?: 0.0,
+            humidity = current.humidity?.toInt() ?: 0,
+            uvIndex = current.uvindex ?: 0.0,
+            sunsetTime = formatToTime(current.sunset ?: ""),
+            hourlyTemps = today.hours.map { it.temp.toInt() },
+            weeklyForecast = response.days.map { day ->
+                DailyForecast(
+                    dayName = formatToDayName(day.datetime),
+                    maxTemp = day.tempMax.toInt(),
+                    minTemp = day.tempMin.toInt(),
+                    imageResId = mapIconToResource(day.icon ?: "")
+                )
+            }
         )
         _uiState.value = WeatherUiState.Success(mappedData)
     }
 
-    private fun estimateGlobalUv(lat: Double ,cloudCoverage: Int): Double {
-        val calender = Calendar.getInstance()
-        val hour = calender.get(Calendar.HOUR_OF_DAY)
-        val dayOfYear = calender.get(Calendar.DAY_OF_YEAR)
-
-        val declination = 23.45 * Math.sin(Math.toRadians(360.0 * (284 + dayOfYear) / 365.0))
-
-        val hourAngle = (hour - 12) * 15.0
-
-        val latRad = Math.toRadians(lat)
-        val decRad = Math.toRadians(declination)
-        val hourRad = Math.toRadians(hourAngle)
-
-        val sinElevation = Math.sin(latRad) * Math.sin(decRad) +
-                Math.cos(latRad) * Math.cos(decRad) * Math.cos(hourRad)
-
-        val elevationAngle = Math.toDegrees(Math.asin(sinElevation))
-
-        if (elevationAngle <= 0) return 0.0
-
-        val clearSkyUv = 13.0 * (elevationAngle / 90.0)
-
-        val cloudFactor = 1.0 - (cloudCoverage / 100.0 * 0.7)
-
-        return clearSkyUv * cloudFactor
+    private fun formatToDayName(dateStr: String): String {
+        val date = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).parse(dateStr)
+        val sdf = SimpleDateFormat("EEEE", Locale.getDefault())
+        return sdf.format(date ?: Date())
     }
 
-    private fun parseWeeklyForecast(forecastList: List<ForecastItem>): List<DailyForecast> {
-        val sdf = SimpleDateFormat("EEEE", Locale.getDefault())
+    private fun formatToTime(isoString: String): String {
+        return try {
+            val inputFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault())
+            val outputFormat = SimpleDateFormat("hh:mm a", Locale.getDefault())
+            val date = inputFormat.parse(isoString)
+            outputFormat.format(date ?: Date())
+        } catch (e: Exception) {
+            isoString.take(5)
+        }
+    }
 
-        return forecastList.groupBy {
-            sdf.format(Date(it.dt * 1000L))
-        }.map { (dayName, items) ->
-            val maxTemp = items.maxOf { it.main.temp }.toInt()
-            val minTemp = items.minOf { it.main.temp }.toInt()
-            val mainCondition = items[items.size / 2].weather[0].main
-
-            DailyForecast(
-                dayName = if (dayName == sdf.format(Date())) "Today" else dayName,
-                maxTemp = maxTemp,
-                minTemp = minTemp,
-                imageResId = when (mainCondition) {
-                    "Rain" -> R.drawable.boot
-                    "Clouds" -> R.drawable.coat
-                    else -> R.drawable.shirt
-                }
-            )
-        }.take(7)
+    private fun mapIconToResource(iconId: String): Int {
+        return when (iconId) {
+            "snow" -> R.drawable.snow_icon
+            "rain" -> R.drawable.rain_icon
+            "fog" -> R.drawable.fog_icon
+            "wind" -> R.drawable.wind_icon
+            "cloudy" -> R.drawable.cloudy_icon
+            "partly-cloudy-day" -> R.drawable.partly_cloudy_day
+            "partly-cloudy-night" -> R.drawable.partly_cloudy_night
+            "clear-day" -> R.drawable.clear_day
+            "clear-night" -> R.drawable.clear_night
+            else -> R.drawable.default_weather_icon
+        }
     }
 }
