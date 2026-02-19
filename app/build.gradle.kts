@@ -1,3 +1,6 @@
+import java.io.FileInputStream
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -5,6 +8,15 @@ plugins {
     alias(libs.plugins.ksp)
     alias(libs.plugins.hilt.android)
 }
+
+val properties = Properties()
+val props = Properties().apply {
+    val propFile = rootProject.file("local.properties")
+    if (propFile.exists()) {
+        load(FileInputStream(propFile))
+    }
+}
+val apiKeyFromLocal = props.getProperty("WEATHER_API_KEY") ?: ""
 
 android {
     namespace = "com.example.weatherapp"
@@ -18,6 +30,8 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        buildConfigField("String", "WEATHER_API_KEY", "\"$apiKeyFromLocal\"")
     }
 
     buildTypes {
@@ -35,6 +49,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     kotlin {
